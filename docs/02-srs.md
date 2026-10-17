@@ -230,3 +230,73 @@ The full schema is in the TDD.
 | NFR-08 | Maintainability | Backend is split into routers, schemas, models and services; the frontend uses strict TypeScript. |
 | NFR-09 | Documentation | API documentation is generated automatically by FastAPI at `/api/docs` (so it is reachable through the `/api/*` routing on Vercel). |
 | NFR-10 | Testability | Core flows and the 401/403 cases are covered by automated backend tests. |
+## 8. Use Cases
+
+### 8.1 Use case diagram
+
+```mermaid
+flowchart LR
+    Emp([Employee])
+    Mgr([Manager])
+    Adm([Admin])
+    UC1[UC-01 Browse tool catalog]
+    UC2[UC-02 Submit access request]
+    UC3[UC-03 Track and cancel own request]
+    UC4[UC-04 Review and decide team requests]
+    UC5[UC-05 Manage tools]
+    UC6[UC-06 Manage users]
+    UC7[UC-07 View audit log]
+    UC8[UC-08 Log in and view profile dashboard]
+    Emp --> UC1 & UC2 & UC3 & UC8
+    Mgr --> UC1 & UC2 & UC3 & UC4 & UC8
+    Adm --> UC1 & UC5 & UC6 & UC7 & UC8
+```
+
+### 8.2 Request status (state diagram)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : user submits request
+    Pending --> Approved : manager approves
+    Pending --> Rejected : manager rejects with comment
+    Pending --> Cancelled : requester cancels
+    Approved --> [*]
+    Rejected --> [*]
+    Cancelled --> [*]
+```
+
+### 8.3 Use case descriptions
+
+| ID | Name | Actor | Preconditions | Main flow | Alternative flows | Postconditions | Release |
+|---|---|---|---|---|---|---|---|
+| UC-01 | Browse tool catalog | Employee, Manager, Admin | User is identified (switcher in MVP, logged in in Beta) | 1. User opens the tool catalog. 2. System lists active tools. 3. User opens a tool to see its details. | Tool does not exist: system shows 404 message. | User has seen the available tools. | MVP |
+| UC-02 | Submit access request | Employee, Manager | User has an assigned manager; tool is active | 1. User picks a tool. 2. User enters a justification (10+ characters). 3. System creates a pending request. 4. System writes an audit entry. | A: pending request for the same tool exists: system refuses (409). B: user has no manager: system refuses (409). C: justification too short: system shows validation error (422). | A pending request exists and is visible to the user and their manager. | MVP |
+| UC-03 | Track and cancel own request | Employee, Manager | User has at least one request | 1. User opens "My requests". 2. System lists the user's requests with status. 3. User cancels a pending request. 4. System sets status to cancelled and writes an audit entry. | Request is not pending: system refuses to cancel (409). | Request status is up to date. | MVP |
+| UC-04 | Review and decide team requests | Manager | At least one direct report has a pending request | 1. Manager opens "Team requests". 2. System lists requests from direct reports. 3. Manager approves or rejects one, with a comment when rejecting. 4. System records decision, decider, time and an audit entry. | A: request is not from a direct report: system refuses (403). B: request is already decided: system refuses (409). C: rejection without comment: validation error (422). | Request is approved or rejected and the decision is on record. | MVP |
+| UC-05 | Manage tools | Admin | Admin is identified | 1. Admin opens "Manage tools". 2. Admin creates, edits or deactivates a tool. 3. System saves the change and writes an audit entry. | Tool name already exists: system refuses (409). | Tool catalog is updated; old requests stay on record. | MVP |
+| UC-06 | Manage users | Admin | Admin is identified | 1. Admin opens "Manage users". 2. Admin creates, edits or deactivates a user and sets role and manager. 3. System saves the change and writes an audit entry. | A: email already exists (409). B: chosen manager is not an active Manager (422). | User records are up to date. | MVP |
+| UC-07 | View audit log | Admin | Admin is logged in with scope `audit:read` | 1. Admin opens the audit log. 2. Admin filters by actor, action or date range. 3. System shows matching entries. | Non-admin tries to open it: system refuses (403). | Admin has seen who did what and when. | Beta |
+| UC-08 | Log in and view profile dashboard | Employee, Manager, Admin | User account is active | 1. User enters email and password. 2. System checks them and returns a JWT with scopes. 3. User sees the profile dashboard (details, role, scopes, request summary). | Wrong password or deactivated account: system refuses (401). | User has a session and sees only what their role allows. | Beta |
+
+## 9. Acceptance Criteria
+
+| ID | Related FR | Release | Given | When | Then |
+|---|---|---|---|---|---|
+| AC-01 | FR-09 | MVP | An employee with an assigned manager and an active tool | They submit a request with a justification of 10 or more characters | A request is created with status `pending` and an audit entry is written |
+| AC-02 | FR-09 | MVP | An employee and an active tool | They submit a justification shorter than 10 characters | The system responds 422 and no request is created |
+| AC-03 | FR-10 | MVP | An employee with a pending request for tool T | They submit another request for tool T | The system responds 409 and no second request is created |
+| AC-04 | FR-11 | MVP | A user with no assigned manager | They submit a request | The system responds 409 and no request is created |
+| AC-05 | FR-12 | MVP | Two employees who each have requests | One employee opens "My requests" | Only that employee's requests are listed |
+| AC-06 | FR-13 | MVP | An employee with a pending request | They cancel it | Status becomes `cancelled` and an audit entry is written |
+| AC-07 | FR-15 | MVP | A pending request from a direct report | The manager approves it | Status becomes `approved`, `decided_by` and `decided_at` are set, and an audit entry is written |
+| AC-08 | FR-15 | MVP | A pending request from a direct report | The manager rejects it without a comment | The system responds 422 and the request stays `pending` |
+| AC-09 | FR-16 | MVP | A request from someone who is not the manager's direct report | The manager tries to decide it | The system responds 403 |
+| AC-10 | FR-16 | MVP | A request that is already approved, rejected or cancelled | A manager tries to decide it | The system responds 409 and the status is unchanged |
+| AC-11 | FR-05 | MVP | A tool that an admin has deactivated | An employee tries to request it | The system refuses the request and existing requests for that tool stay on record |
+| AC-12 | FR-19 | MVP | Any create, update, deactivate, cancel or decision action | The action succeeds | An audit entry exists with actor, action, entity, entity id and time |
+| AC-13 | FR-21 | Beta | An active user with a known password | They log in with the right email and password | The system returns 200 and a JWT that holds their role and scopes |
+| AC-14 | FR-21, FR-24 | Beta | A user who enters a wrong password, or a request with no token | They log in, or call a protected endpoint | The system responds 401 |
+| AC-15 | FR-25 | Beta | A logged-in Employee | They call `GET /api/audit-logs` | The system responds 403 |
+| AC-16 | FR-28 | Beta | A user an admin has deactivated | They try to log in or use an old token | The system responds 401 |
+| AC-17 | FR-20 | Beta | An admin and several audit entries | The admin filters by actor or date range | Only matching entries are returned |
+| AC-18 | FR-34 | Beta | A logged-in Employee | They open the app, or type an admin page address directly | Admin menus are hidden and the direct address shows a "Not allowed" page |
